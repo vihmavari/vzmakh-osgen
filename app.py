@@ -24,6 +24,15 @@ def cm_to_dxa(cm):
     return dxa
 
 
+def format_grade(val):
+    if pd.isna(val):
+        return ""
+    # Если pandas распознал 5/5 как дату
+    if isinstance(val, (datetime.datetime, datetime.date, pd.Timestamp)):
+        return val.strftime("%d/%m").lstrip("0").replace("/0", "/")
+    return str(val).strip()
+
+
 max_col_width_dxa = cm_to_dxa(MAX_WIDTH_CM)
 
 uploaded_file = st.file_uploader("Выберите Excel файл", type=["xlsx"])
@@ -69,8 +78,10 @@ if uploaded_file:
                     continue
                 grades = row[3:].tolist()
                 for topic, date, GRADE_VAL in zip(topics, dates, grades):
-                    if pd.isna(GRADE_VAL):
+                    formatted_g = format_grade(GRADE_VAL)
+                    if formatted_g == "" or formatted_g.lower() == "nan":
                         continue
+
                     try:
                         date_fmt = pd.to_datetime(date).strftime("%d.%m")
                     except Exception:
@@ -80,7 +91,7 @@ if uploaded_file:
                         "Предмет": str(sheet).strip(),
                         "Тема": str(topic).strip(),
                         "Дата": date_fmt,
-                        "Оценка": str(GRADE_VAL).strip(),
+                        "Оценка": formatted_g,
                     })
 
         # ------------------ создаём DataFrame ------------------
