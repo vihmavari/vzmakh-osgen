@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from docx import
+from docx import Document
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.shared import Cm
