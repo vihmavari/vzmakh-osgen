@@ -1,3 +1,5 @@
+import datetime
+
 import streamlit as st
 import pandas as pd
 from docx import Document
@@ -183,6 +185,6 @@ if uploaded_file:
         st.download_button(
             label="Скачать готовый документ",
             data=output_doc.getvalue(),
-            file_name="Успеваемость.docx",
+            file_name=f"Успеваемость от {datetime.datetime.today().strftime('%Y.%m.%d')} ({str(uploaded_file.name)}).docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
