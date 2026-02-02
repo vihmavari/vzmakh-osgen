@@ -163,7 +163,7 @@ if uploaded_file:
                                 current_row = []
                                 current_row_w = 0
                             current_row.append(s)
-                            current_row_w += s["width_cm"] + 0.5
+                            current_row_w += s["width_cm"] + 1
                         if current_row: rows.append(current_row)
 
                         # Отрисовка
