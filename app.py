@@ -25,7 +25,7 @@ start_date = st.sidebar.date_input(
 
 # Настройка внешнего вида
 st.sidebar.subheader("Внешний вид")
-compact_mode = st.sidebar.toggle("Компактный режим (β - Beta) 🧪", value=False,
+compact_mode = st.sidebar.toggle("Компактный режим (β - Beta)", value=False,
                                  help="Пытается уместить таблицы в ряд для экономии места")
 
 show_dates = st.sidebar.toggle("Включить строку дат в таблице", value=True)
@@ -222,7 +222,14 @@ if uploaded_file:
                 progress_bar.progress(1.0)
                 status_text.empty()
                 st.success("✅ Готово!")
-                st.download_button("📥 Скачать файл", output_doc.getvalue(),
-                                   f"ОС_{datetime.datetime.now().strftime('%d.%m')}.docx")
+
+                filename = (f"Обратная_Связь_{datetime.datetime.now().strftime('%d.%m')} "
+                            f"({uploaded_file.name.split('.')[0]}).docx")
+                st.download_button(
+                    label="📥 Скачать обратную связь",
+                    data=output_doc.getvalue(),
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
         except Exception as e:
             st.error(f"Ошибка: {e}")
