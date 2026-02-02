@@ -9,12 +9,7 @@ from docx.enum.table import WD_ROW_HEIGHT_RULE
 from io import BytesIO
 
 # --- ИНТЕРФЕЙС ---
-st.set_page_config(
-    page_title="Успеваемость: Генератор ОС", # Надпись на вкладке
-    page_icon="🖨",                         # Фавикон (эмодзи или путь к картинке)
-    layout="centered"                       # Можно выбрать "wide" для широкого экрана
-)
-st.set_page_config(page_title="Генератор отчетов", page_icon="📊")
+st.set_page_config(page_title="Генератор отчетов", page_icon="🖨")
 st.title("Генератор отчетов по успеваемости")
 
 # --- БОКОВАЯ ПАНЕЛЬ НАСТРОЕК ---
