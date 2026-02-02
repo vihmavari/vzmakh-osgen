@@ -9,6 +9,11 @@ from docx.enum.table import WD_ROW_HEIGHT_RULE
 from io import BytesIO
 
 # --- ИНТЕРФЕЙС ---
+st.set_page_config(
+    page_title="Успеваемость: Генератор ОС", # Надпись на вкладке
+    page_icon="🖨",                         # Фавикон (эмодзи или путь к картинке)
+    layout="centered"                       # Можно выбрать "wide" для широкого экрана
+)
 st.set_page_config(page_title="Генератор отчетов", page_icon="📊")
 st.title("Генератор отчетов по успеваемости")
 
@@ -190,7 +195,7 @@ if uploaded_file:
             filename = (f"Обратная_Связь_{datetime.datetime.now().strftime('%d.%m')} "
                         f"({uploaded_file.name.split('.')[0]}).docx")
             st.download_button(
-                label="📥 Скачать результат",
+                label="📥 Скачать обратную связь",
                 data=output_doc.getvalue(),
                 file_name= filename,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
