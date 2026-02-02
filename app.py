@@ -19,7 +19,7 @@ st.sidebar.header("⚙️ Настройки отчета")
 st.sidebar.subheader("Фильтр данных")
 start_date = st.sidebar.date_input(
     "Показывать оценки начиная с:",
-    value=datetime.date(2023, 9, 1),  # Значение по умолчанию
+    value=datetime.date(2026, 1, 1),  # Значение по умолчанию
     help="Оценки за даты ранее выбранной не попадут в отчет"
 )
 
