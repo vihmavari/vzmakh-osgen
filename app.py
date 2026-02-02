@@ -128,33 +128,47 @@ if uploaded_file:
                         d_list = df_subject["Дата"].tolist()
                         g_list = df_subject["Оценка"].tolist()
 
-                        # Определяем количество строк в таблице (2 или 3)
-                        # 0-я: Темы, 1-я: Даты (опционально), 2-я: Оценки
+                        if not t_list: continue
+
+                        # Определяем количество строк и создаем таблицу
                         num_rows = 3 if show_dates else 2
-                        table = doc.add_table(rows=num_rows, cols=len(t_list))
+                        ncols = len(t_list)
+                        table = doc.add_table(rows=num_rows, cols=ncols)
                         table.style = 'Table Grid'
 
-                        # Настройка строк
+                        # --- ЖЕСТКАЯ ФИКСАЦИЯ ШИРИНЫ (tblLayout: fixed) ---
+                        tblPr = table._tbl.tblPr
+                        tblLayout = OxmlElement('w:tblLayout')
+                        tblLayout.set(qn('w:type'), 'fixed')
+                        tblPr.append(tblLayout)
+
                         row_topics = table.rows[0]
-                        row_grades = table.rows[-1]  # Последняя строка всегда оценки
+                        row_grades = table.rows[-1]
                         row_dates = table.rows[1] if show_dates else None
 
                         for i, (t, d, g) in enumerate(zip(t_list, d_list, g_list)):
-                            # Темы
+                            # 1. Заполняем Темы (Вертикально)
                             cell_t = row_topics.cells[i]
                             cell_t.text = str(t) if str(t) != 'nan' else ''
                             tcPr = cell_t._tc.get_or_add_tcPr()
                             rotation = parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w')))
                             tcPr.append(rotation)
 
-                            # Даты (если включены)
+                            # 2. Заполняем Даты (если нужно)
                             if show_dates:
                                 row_dates.cells[i].text = str(d)
 
-                            # Оценки
+                            # 3. Заполняем Оценки
                             row_grades.cells[i].text = str(g)
 
-                        # Высота шапки
+                            # --- ВОЗВРАЩАЕМ ФИКСАЦИЮ ШИРИНЫ КОЛОНОК ---
+                            for r_idx in range(num_rows):
+                                cell = table.rows[r_idx].cells[i]
+                                tcW = cell._tc.get_or_add_tcPr().get_or_add_tcW()
+                                tcW.set(qn('w:w'), str(max_col_width_dxa))
+                                tcW.set(qn('w:type'), 'dxa')
+
+                        # Высота первой строки (шапки)
                         max_len = max(len(str(t)) for t in t_list) if t_list else 1
                         row_topics.height = Cm(max(max_len * HEIGHT_COEFF, BASE_HEIGHT_CM))
                         row_topics.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
