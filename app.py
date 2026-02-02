@@ -19,7 +19,7 @@ st.sidebar.header("⚙️ Настройки отчета")
 st.sidebar.subheader("Фильтр данных")
 start_date = st.sidebar.date_input(
     "Показывать оценки начиная с:",
-    value=datetime.date(2026, 1, 1),  # Значение по умолчанию
+    value=datetime.date(2026, 1, 1),
     help="Оценки за даты ранее выбранной не попадут в отчет"
 )
 
@@ -40,6 +40,7 @@ if separator_type == "Пустые строки (параграфы)":
 MAX_WIDTH_CM = 2
 BASE_HEIGHT_CM = 1.5
 HEIGHT_COEFF = 0.07
+PAGE_WIDTH_CM = 19.0  # Рабочая ширина листа A4 (21см - поля)
 
 
 def cm_to_dxa(cm):
@@ -102,15 +103,12 @@ if uploaded_file:
 
                     grades = row[3:].tolist()
                     for topic, date_val, GRADE_VAL in zip(topics, dates_raw, grades):
-                        # --- ФИЛЬТР ПО ДАТЕ ---
                         try:
                             current_date = pd.to_datetime(date_val).date()
-                            # Если дата оценки меньше выбранной — пропускаем
                             if current_date < start_date:
                                 continue
                             date_fmt = current_date.strftime("%d.%m")
                         except:
-                            # Если дату не удалось распознать (например, пустая ячейка)
                             continue
 
                         formatted_g = format_grade(GRADE_VAL)
@@ -133,7 +131,7 @@ if uploaded_file:
                     full = pd.DataFrame(results).sort_values(["ФИО", "Предмет", "Дата"])
                     doc = Document()
                     for sec in doc.sections:
-                        sec.top_margin = sec.bottom_margin = sec.left_margin = sec.right_margin = Cm(1)
+                        sec.top_margin = sec.bottom_margin = sec.left_margin = sec.right_margin = Cm(0.9)
 
                     student_groups = list(full.groupby("ФИО"))
                     total_students = len(student_groups)
@@ -142,47 +140,73 @@ if uploaded_file:
                         status_text.text(f"📄 Оформление: {student} ({idx + 1}/{total_students})")
                         doc.add_heading(student, level=2)
 
-                        for subject, df_subject in df_student.groupby("Предмет"):
-                            doc.add_heading(subject, level=3)
+                        # Подготовка данных предметов
+                        subjects_data = []
+                        for subj_name, df_subj in df_student.groupby("Предмет"):
+                            t_list = df_subj["Тема"].tolist()
+                            if not t_list: continue
+                            subjects_data.append({
+                                "name": subj_name,
+                                "topics": t_list,
+                                "dates": df_subj["Дата"].tolist(),
+                                "grades": df_subj["Оценка"].tolist(),
+                                "width_cm": len(t_list) * MAX_WIDTH_CM
+                            })
 
-                            t_list = df_subject["Тема"].tolist()
-                            d_list = df_subject["Дата"].tolist()
-                            g_list = df_subject["Оценка"].tolist()
+                        # Упаковка в ряды
+                        rows = []
+                        current_row = []
+                        current_row_w = 0
+                        for s in subjects_data:
+                            if current_row_w + s["width_cm"] > PAGE_WIDTH_CM and current_row:
+                                rows.append(current_row)
+                                current_row = []
+                                current_row_w = 0
+                            current_row.append(s)
+                            current_row_w += s["width_cm"] + 0.5
+                        if current_row: rows.append(current_row)
 
-                            num_rows = 3 if show_dates else 2
-                            table = doc.add_table(rows=num_rows, cols=len(t_list))
-                            table.style = 'Table Grid'
+                        # Отрисовка
+                        for row_subjects in rows:
+                            container = doc.add_table(rows=1, cols=len(row_subjects))
+                            container.autofit = False
 
-                            tblPr = table._tbl.tblPr
-                            tblLayout = OxmlElement('w:tblLayout')
-                            tblLayout.set(qn('w:type'), 'fixed')
-                            tblPr.append(tblLayout)
+                            for col_idx, s in enumerate(row_subjects):
+                                parent_cell = container.rows[0].cells[col_idx]
+                                p = parent_cell.paragraphs[0]
+                                p.add_run(s["name"]).bold = True
 
-                            for col_idx, (t, d, g) in enumerate(zip(t_list, d_list, g_list)):
-                                # Темы
-                                cell_t = table.rows[0].cells[col_idx]
-                                cell_t.text = str(t) if str(t) != 'nan' else ''
-                                tcPr = cell_t._tc.get_or_add_tcPr()
-                                rotation = parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w')))
-                                tcPr.append(rotation)
+                                num_rows = 3 if show_dates else 2
+                                inner_table = parent_cell.add_table(rows=num_rows, cols=len(s["topics"]))
+                                inner_table.style = 'Table Grid'
 
-                                # Даты (если включены)
-                                if show_dates:
-                                    table.rows[1].cells[col_idx].text = str(d)
+                                # Фиксация вложенной таблицы
+                                itblPr = inner_table._tbl.tblPr
+                                itblLayout = OxmlElement('w:tblLayout')
+                                itblLayout.set(qn('w:type'), 'fixed')
+                                itblPr.append(itblLayout)
 
-                                # Оценки (всегда в последней строке)
-                                table.rows[-1].cells[col_idx].text = str(g)
+                                for c_idx, (t, d, g) in enumerate(zip(s["topics"], s["dates"], s["grades"])):
+                                    cell_t = inner_table.rows[0].cells[c_idx]
+                                    cell_t.text = str(t) if str(t) != 'nan' else ''
+                                    tcPr = cell_t._tc.get_or_add_tcPr()
+                                    rotation = parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w')))
+                                    tcPr.append(rotation)
 
-                                # Фиксация ширины для каждой ячейки колонки
-                                for r_idx in range(num_rows):
-                                    tcW = table.rows[r_idx].cells[col_idx]._tc.get_or_add_tcPr().get_or_add_tcW()
-                                    tcW.set(qn('w:w'), str(max_col_width_dxa))
-                                    tcW.set(qn('w:type'), 'dxa')
+                                    if show_dates:
+                                        inner_table.rows[1].cells[c_idx].text = str(d)
+                                    inner_table.rows[-1].cells[c_idx].text = str(g)
 
-                            # Высота шапки
-                            max_len = max(len(str(t)) for t in t_list) if t_list else 1
-                            table.rows[0].height = Cm(max(max_len * HEIGHT_COEFF, BASE_HEIGHT_CM))
-                            table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+                                    for r_idx in range(num_rows):
+                                        tcW = inner_table.rows[r_idx].cells[c_idx]._tc.get_or_add_tcPr().get_or_add_tcW()
+                                        tcW.set(qn('w:w'), str(max_col_width_dxa))
+                                        tcW.set(qn('w:type'), 'dxa')
+
+                                max_len = max(len(str(t)) for t in s["topics"]) if s["topics"] else 1
+                                inner_table.rows[0].height = Cm(max(max_len * HEIGHT_COEFF, BASE_HEIGHT_CM))
+                                inner_table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+
+                            doc.add_paragraph()  # Отступ между рядами предметов
 
                         if idx < total_students - 1:
                             if separator_type == "Разрыв страницы":
