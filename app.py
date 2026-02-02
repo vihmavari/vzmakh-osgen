@@ -145,29 +145,48 @@ if uploaded_file:
                             })
 
                         if compact_mode:
-                            # --- ЛОГИКА КОМПАКТНОГО РЕЖИМА (В РЯД) ---
+                            # --- ЛОГИКА КОМПАКТНОГО РЕЖИМА (ПРОПОРЦИОНАЛЬНАЯ ВЕРСТКА) ---
                             rows = []
                             curr_row, curr_w = [], 0
                             for s in subjs:
+                                # Проверяем, влезет ли таблица в текущий ряд
                                 if curr_w + s["w"] > PAGE_WIDTH_CM and curr_row:
                                     rows.append(curr_row)
                                     curr_row, curr_w = [], 0
-                                curr_row.append(s);
-                                curr_w += s["w"] + 0.5
+                                curr_row.append(s)
+                                curr_w += s["w"] + 0.5  # 0.5см — технологический зазор
                             if curr_row: rows.append(curr_row)
 
                             for r_subjs in rows:
+                                # 1. Считаем суммарное кол-во колонок в этом ряду для пропорций
+                                total_cols_in_row = sum(len(s["topics"]) for s in r_subjs)
+
+                                # Создаем контейнер
                                 container = doc.add_table(rows=1, cols=len(r_subjs))
+                                container.autofit = False
+
+                                # 2. Устанавливаем ширину ячеек контейнера пропорционально контенту
                                 for c_idx, s in enumerate(r_subjs):
                                     cell = container.rows[0].cells[c_idx]
+
+                                    # Расчет пропорциональной ширины (в dxa)
+                                    # Формула: (кол-во колонок предмета / сумма колонок ряда) * Общая ширина dxa
+                                    row_width_dxa = cm_to_dxa(PAGE_WIDTH_CM)
+                                    cell_width_dxa = int((len(s["topics"]) / total_cols_in_row) * row_width_dxa)
+
+                                    tcPr = cell._tc.get_or_add_tcPr()
+                                    tcW = tcPr.get_or_add_tcW()
+                                    tcW.set(qn('w:w'), str(cell_width_dxa))
+                                    tcW.set(qn('w:type'), 'dxa')
+
+                                    # Отрисовка контента (название + вложенная таблица)
                                     cell.paragraphs[0].add_run(s["name"]).bold = True
 
-                                    # Создание вложенной таблицы
                                     n_rows = 3 if show_dates else 2
                                     inner = cell.add_table(rows=n_rows, cols=len(s["topics"]))
                                     inner.style = 'Table Grid'
 
-                                    # Фиксация ширины
+                                    # Фиксация вложенной таблицы (fixed layout)
                                     itblPr = inner._tbl.tblPr
                                     itblLayout = OxmlElement('w:tblLayout')
                                     itblLayout.set(qn('w:type'), 'fixed')
@@ -176,21 +195,25 @@ if uploaded_file:
                                     for ci, (t, d, g) in enumerate(zip(s["topics"], s["dates"], s["grades"])):
                                         inner.rows[0].cells[ci].text = str(t)
                                         # Поворот текста
-                                        tcPr = inner.rows[0].cells[ci]._tc.get_or_add_tcPr()
-                                        tcPr.append(
+                                        tcPr_t = inner.rows[0].cells[ci]._tc.get_or_add_tcPr()
+                                        tcPr_t.append(
                                             parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w'))))
 
                                         if show_dates: inner.rows[1].cells[ci].text = str(d)
                                         inner.rows[-1].cells[ci].text = str(g)
 
+                                        # Применяем MAX_WIDTH_CM к каждой колонке вложенной таблицы
                                         for ri in range(n_rows):
-                                            tcW = inner.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW()
-                                            tcW.set(qn('w:w'), str(max_col_width_dxa));
-                                            tcW.set(qn('w:type'), 'dxa')
+                                            tcW_inner = inner.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW()
+                                            tcW_inner.set(qn('w:w'), str(max_col_width_dxa))
+                                            tcW_inner.set(qn('w:type'), 'dxa')
 
+                                    # Высота темы
                                     max_h = max(len(str(t)) for t in s["topics"])
                                     inner.rows[0].height = Cm(max(max_h * HEIGHT_COEFF, BASE_HEIGHT_CM))
-                                doc.add_paragraph()
+                                    inner.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+
+                                doc.add_paragraph()  # Отступ между рядами
                         else:
                             # --- КЛАССИЧЕСКИЙ РЕЖИМ (ОДИН ПОД ДРУГИМ) ---
                             for s in subjs:
