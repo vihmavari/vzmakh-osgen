@@ -6,6 +6,7 @@ from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.shared import Cm
 from docx.enum.table import WD_ROW_HEIGHT_RULE
+from docx.enum.section import WD_ORIENT
 from io import BytesIO
 
 # --- ИНТЕРФЕЙС ---
@@ -20,15 +21,17 @@ st.sidebar.subheader("Фильтр данных")
 start_date = st.sidebar.date_input(
     "Показывать оценки начиная с:",
     value=datetime.date(2026, 1, 1),
-    help="Оценки за даты ранее выбранной не попадут в отчет"
+    help="Оценки за даты ранее выбранной не попадут в обратную связь"
 )
 
 # Настройка внешнего вида
 st.sidebar.subheader("Внешний вид")
-compact_mode = st.sidebar.toggle("Компактный режим (β - Beta)", value=False,
-                                 help="Пытается уместить таблицы в ряд для экономии места")
+compact_mode = st.sidebar.toggle("Компактный режим (Beta)", value=False,
+                                 help="Размещает таблицы в ряд для экономии бумаги")
 
-show_dates = st.sidebar.toggle("Включить строку дат в таблице", value=True)
+orientation = st.sidebar.selectbox("Ориентация страницы", ["Книжная", "Альбомная"])
+
+show_dates = st.sidebar.toggle("Включить строку дат", value=True)
 
 separator_type = st.sidebar.selectbox(
     "Разделитель между учениками",
@@ -43,7 +46,12 @@ if separator_type == "Пустые строки (параграфы)":
 MAX_WIDTH_CM = 2
 BASE_HEIGHT_CM = 1.5
 HEIGHT_COEFF = 0.07
-PAGE_WIDTH_CM = 19.0  # Рабочая ширина листа A4 (21см - поля)
+
+# Динамическая ширина страницы в зависимости от ориентации
+if orientation == "Альбомная":
+    PAGE_WIDTH_CM = 27.5  # ~29.7см ширина листа минус поля
+else:
+    PAGE_WIDTH_CM = 19.0  # ~21см ширина листа минус поля
 
 
 def cm_to_dxa(cm):
@@ -73,71 +81,62 @@ if uploaded_file:
         try:
             xls = pd.ExcelFile(uploaded_file)
             sheet_names = xls.sheet_names
-            index_sheet_name = sheet_names[0]
-            index_df = pd.read_excel(uploaded_file, sheet_name=index_sheet_name, header=None)
+            index_df = pd.read_excel(uploaded_file, sheet_name=sheet_names[0], header=None)
             subject_sheets = index_df.iloc[:, 0].dropna().tolist()
 
             # ------------------ ЭТАП 1: СБОР ДАННЫХ ------------------
             for i, sheet in enumerate(subject_sheets):
                 progress_bar.progress(i / len(subject_sheets))
-                status_text.text(f"🔍 Считывание: {sheet}")
-
+                status_text.text(f"🔍 Обработка: {sheet}")
                 if sheet not in sheet_names: continue
                 df = pd.read_excel(uploaded_file, sheet_name=sheet, header=None)
 
                 try:
-                    topics = df.iloc[0, 3:].tolist()
-                    dates_raw = df.iloc[1, 3:].tolist()
-                    students = df.iloc[5:, :]
+                    topics, dates_raw, students = df.iloc[0, 3:], df.iloc[1, 3:], df.iloc[5:, :]
+                    for _, row in students.iterrows():
+                        student = row[1]
+                        if not isinstance(student, str) or not student.strip(): continue
+                        for t, d, g in zip(topics, dates_raw, row[3:]):
+                            try:
+                                c_date = pd.to_datetime(d).date()
+                                if c_date < start_date: continue
+                                formatted_g = format_grade(g)
+                                if not formatted_g or formatted_g.lower() == "nan": continue
+                                results.append({
+                                    "ФИО": student.strip(), "Предмет": str(sheet).strip(),
+                                    "Тема": str(t).strip(), "Дата": c_date.strftime("%d.%m"),
+                                    "Оценка": formatted_g
+                                })
+                            except:
+                                continue
                 except:
                     continue
 
-                for _, row in students.iterrows():
-                    student = row[1]
-                    if not isinstance(student, str) or not student.strip(): continue
-                    grades = row[3:].tolist()
-                    for t, d, g in zip(topics, dates_raw, grades):
-                        try:
-                            c_date = pd.to_datetime(d).date()
-                            if c_date < start_date: continue
-                            date_fmt = c_date.strftime("%d.%m")
-                        except:
-                            continue
-
-                        formatted_g = format_grade(g)
-                        if formatted_g == "" or formatted_g.lower() == "nan": continue
-
-                        results.append({
-                            "ФИО": student.strip(),
-                            "Предмет": str(sheet).strip(),
-                            "Тема": str(t).strip(),
-                            "Дата": date_fmt,
-                            "Оценка": formatted_g,
-                        })
-
-            # ------------------ ЭТАП 2: ГЕНЕРАЦИЯ WORD ------------------
             if not results:
-                st.error("❌ Оценок за выбранный период не найдено.")
+                st.error("Оценок не найдено.")
             else:
-                with st.spinner("✍️ Оформление документа..."):
-                    full = pd.DataFrame(results).sort_values(["ФИО", "Предмет", "Дата"])
+                with st.spinner("Формирование документа..."):
                     doc = Document()
 
-                    # Настройка полей
-                    margin = 0.8 if compact_mode else 1.0
-                    for sec in doc.sections:
-                        sec.top_margin = sec.bottom_margin = sec.left_margin = sec.right_margin = Cm(margin)
+                    # Настройка ориентации и полей
+                    section = doc.sections[0]
+                    if orientation == "Альбомная":
+                        section.orientation = WD_ORIENT.LANDSCAPE
+                        section.page_width, section.page_height = Cm(29.7), Cm(21.0)
 
+                    margin = 0.8 if compact_mode else 1.0
+                    section.top_margin = section.bottom_margin = section.left_margin = section.right_margin = Cm(margin)
+
+                    full = pd.DataFrame(results).sort_values(["ФИО", "Предмет", "Дата"])
                     student_groups = list(full.groupby("ФИО"))
+
                     for idx, (student, df_student) in enumerate(student_groups):
                         status_text.text(f"📄 Оформление: {student}")
                         doc.add_heading(student, level=2)
 
-                        # Подготовка данных предметов
                         subjs = []
                         for s_name, df_s in df_student.groupby("Предмет"):
                             t_list = df_s["Тема"].tolist()
-                            if not t_list: continue
                             subjs.append({
                                 "name": s_name, "topics": t_list,
                                 "dates": df_s["Дата"].tolist(), "grades": df_s["Оценка"].tolist(),
@@ -145,101 +144,74 @@ if uploaded_file:
                             })
 
                         if compact_mode:
-                            # --- ЛОГИКА КОМПАКТНОГО РЕЖИМА (ПРОПОРЦИОНАЛЬНАЯ ВЕРСТКА) ---
-                            rows = []
-                            curr_row, curr_w = [], 0
+                            # --- КОМПАКТНЫЙ РЕЖИМ (ПРОПОРЦИОНАЛЬНЫЙ) ---
+                            rows, curr_row, curr_w = [], [], 0
                             for s in subjs:
-                                # Проверяем, влезет ли таблица в текущий ряд
                                 if curr_w + s["w"] > PAGE_WIDTH_CM and curr_row:
                                     rows.append(curr_row)
                                     curr_row, curr_w = [], 0
-                                curr_row.append(s)
-                                curr_w += s["w"] + 0.5  # 0.5см — технологический зазор
+                                curr_row.append(s);
+                                curr_w += s["w"] + 0.5
                             if curr_row: rows.append(curr_row)
 
                             for r_subjs in rows:
-                                # 1. Считаем суммарное кол-во колонок в этом ряду для пропорций
-                                total_cols_in_row = sum(len(s["topics"]) for s in r_subjs)
-
-                                # Создаем контейнер
+                                total_cols = sum(len(s["topics"]) for s in r_subjs)
                                 container = doc.add_table(rows=1, cols=len(r_subjs))
                                 container.autofit = False
 
-                                # 2. Устанавливаем ширину ячеек контейнера пропорционально контенту
                                 for c_idx, s in enumerate(r_subjs):
                                     cell = container.rows[0].cells[c_idx]
+                                    # Пропорциональная ширина ячейки контейнера
+                                    c_width = int((len(s["topics"]) / total_cols) * cm_to_dxa(PAGE_WIDTH_CM))
+                                    cell._tc.get_or_add_tcPr().get_or_add_tcW().set(qn('w:w'), str(c_width))
 
-                                    # Расчет пропорциональной ширины (в dxa)
-                                    # Формула: (кол-во колонок предмета / сумма колонок ряда) * Общая ширина dxa
-                                    row_width_dxa = cm_to_dxa(PAGE_WIDTH_CM)
-                                    cell_width_dxa = int((len(s["topics"]) / total_cols_in_row) * row_width_dxa)
-
-                                    tcPr = cell._tc.get_or_add_tcPr()
-                                    tcW = tcPr.get_or_add_tcW()
-                                    tcW.set(qn('w:w'), str(cell_width_dxa))
-                                    tcW.set(qn('w:type'), 'dxa')
-
-                                    # Отрисовка контента (название + вложенная таблица)
                                     cell.paragraphs[0].add_run(s["name"]).bold = True
-
                                     n_rows = 3 if show_dates else 2
                                     inner = cell.add_table(rows=n_rows, cols=len(s["topics"]))
                                     inner.style = 'Table Grid'
 
-                                    # Фиксация вложенной таблицы (fixed layout)
-                                    itblPr = inner._tbl.tblPr
-                                    itblLayout = OxmlElement('w:tblLayout')
-                                    itblLayout.set(qn('w:type'), 'fixed')
-                                    itblPr.append(itblLayout)
+                                    # Фиксация колонок внутри
+                                    inner._tbl.tblPr.append(
+                                        parse_xml(r'<w:tblLayout {} w:type="fixed"/>'.format(nsdecls('w'))))
 
                                     for ci, (t, d, g) in enumerate(zip(s["topics"], s["dates"], s["grades"])):
                                         inner.rows[0].cells[ci].text = str(t)
-                                        # Поворот текста
-                                        tcPr_t = inner.rows[0].cells[ci]._tc.get_or_add_tcPr()
-                                        tcPr_t.append(
+                                        tcPr = inner.rows[0].cells[ci]._tc.get_or_add_tcPr()
+                                        tcPr.append(
                                             parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w'))))
-
                                         if show_dates: inner.rows[1].cells[ci].text = str(d)
                                         inner.rows[-1].cells[ci].text = str(g)
-
-                                        # Применяем MAX_WIDTH_CM к каждой колонке вложенной таблицы
                                         for ri in range(n_rows):
-                                            tcW_inner = inner.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW()
-                                            tcW_inner.set(qn('w:w'), str(max_col_width_dxa))
-                                            tcW_inner.set(qn('w:type'), 'dxa')
+                                            itcW = inner.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW()
+                                            itcW.set(qn('w:w'), str(max_col_width_dxa))
 
-                                    # Высота темы
                                     max_h = max(len(str(t)) for t in s["topics"])
                                     inner.rows[0].height = Cm(max(max_h * HEIGHT_COEFF, BASE_HEIGHT_CM))
-                                    inner.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
-
-                                doc.add_paragraph()  # Отступ между рядами
+                                doc.add_paragraph()
                         else:
-                            # --- КЛАССИЧЕСКИЙ РЕЖИМ (ОДИН ПОД ДРУГИМ) ---
+                            # --- КЛАССИЧЕСКИЙ РЕЖИМ ---
                             for s in subjs:
                                 doc.add_heading(s["name"], level=3)
                                 n_rows = 3 if show_dates else 2
                                 table = doc.add_table(rows=n_rows, cols=len(s["topics"]))
                                 table.style = 'Table Grid'
                                 for ci, (t, d, g) in enumerate(zip(s["topics"], s["dates"], s["grades"])):
-                                    table.rows[0].cells[ci].text = str(t)
+                                    table.rows[0].cells[ci].text = t
                                     tcPr = table.rows[0].cells[ci]._tc.get_or_add_tcPr()
                                     tcPr.append(parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w'))))
-                                    if show_dates: table.rows[1].cells[ci].text = str(d)
-                                    table.rows[-1].cells[ci].text = str(g)
+                                    if show_dates: table.rows[1].cells[ci].text = d
+                                    table.rows[-1].cells[ci].text = g
                                     for ri in range(n_rows):
-                                        tcW = table.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW()
-                                        tcW.set(qn('w:w'), str(max_col_width_dxa));
-                                        tcW.set(qn('w:type'), 'dxa')
+                                        table.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW().set(qn('w:w'),
+                                                                                                            str(max_col_width_dxa))
                                 table.rows[0].height = Cm(
                                     max(max(len(str(t)) for t in s["topics"]) * HEIGHT_COEFF, BASE_HEIGHT_CM))
 
-                        # Разделитель
                         if idx < len(student_groups) - 1:
                             if separator_type == "Разрыв страницы":
                                 doc.add_page_break()
                             else:
-                                for _ in range(num_paragraphs): doc.add_paragraph()
+                                [doc.add_paragraph() for _ in range(num_paragraphs)]
 
                 doc.save(output_doc)
                 progress_bar.progress(1.0)
@@ -255,4 +227,4 @@ if uploaded_file:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
         except Exception as e:
-            st.error(f"Ошибка: {e}")
+            st.error(f"Критическая ошибка: {e}")
