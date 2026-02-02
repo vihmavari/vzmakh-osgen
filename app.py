@@ -187,9 +187,11 @@ if uploaded_file:
             progress_bar.progress(1.0)
             status_text.empty()
             st.success(f"✅ Документ готов!")
+            filename = (f"Обратная_Связь_{datetime.datetime.now().strftime('%d.%m')} "
+                        f"({uploaded_file.name.split('.')[0]}).docx")
             st.download_button(
                 label="📥 Скачать результат",
                 data=output_doc.getvalue(),
-                file_name=f"ОС_{datetime.datetime.now().strftime('%H%M')}.docx",
+                file_name= filename,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
