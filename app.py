@@ -46,6 +46,7 @@ if separator_type == "Пустые строки (параграфы)":
 MAX_WIDTH_CM = 2
 BASE_HEIGHT_CM = 1.5
 HEIGHT_COEFF = 0.07
+MAX_TOPIC_HEIGHT_CM = 5.5
 
 # Динамическая ширина страницы в зависимости от ориентации
 if orientation == "Альбомная":
@@ -185,8 +186,10 @@ if uploaded_file:
                                             itcW = inner.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW()
                                             itcW.set(qn('w:w'), str(max_col_width_dxa))
 
-                                    max_h = max(len(str(t)) for t in s["topics"])
-                                    inner.rows[0].height = Cm(max(max_h * HEIGHT_COEFF, BASE_HEIGHT_CM))
+                                    calculated_h = max(len(str(t)) for t in s["topics"]) * HEIGHT_COEFF
+                                    final_h = max(BASE_HEIGHT_CM, min(calculated_h, MAX_TOPIC_HEIGHT_CM))
+                                    inner.rows[0].height = Cm(final_h)
+                                    inner.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
                                 doc.add_paragraph()
                         else:
                             # --- КЛАССИЧЕСКИЙ РЕЖИМ ---
