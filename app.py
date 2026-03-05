@@ -104,8 +104,10 @@ if uploaded_file:
                                 formatted_g = format_grade(g)
                                 if not formatted_g or formatted_g.lower() == "nan": continue
                                 results.append({
-                                    "ФИО": student.strip(), "Предмет": str(sheet).strip(),
-                                    "Тема": str(t).strip(), "Дата": c_date.strftime("%d.%m"),
+                                    "ФИО": student.strip(),
+                                    "Предмет": str(sheet).strip(),
+                                    "Тема": str(t).strip(),
+                                    "Дата": c_date,
                                     "Оценка": formatted_g
                                 })
                             except:
@@ -138,9 +140,12 @@ if uploaded_file:
                         subjs = []
                         for s_name, df_s in df_student.groupby("Предмет"):
                             t_list = df_s["Тема"].tolist()
+                            formatted_dates = [d.strftime("%d.%m") for d in df_s["Дата"]]
                             subjs.append({
-                                "name": s_name, "topics": t_list,
-                                "dates": df_s["Дата"].tolist(), "grades": df_s["Оценка"].tolist(),
+                                "name": s_name,
+                                "topics": t_list,
+                                "dates": formatted_dates,
+                                "grades": df_s["Оценка"].tolist(),
                                 "w": len(t_list) * MAX_WIDTH_CM
                             })
 
