@@ -219,7 +219,8 @@ if uploaded_file:
                             if separator_type == "Разрыв страницы":
                                 doc.add_page_break()
                             else:
-                                [doc.add_paragraph() for _ in range(num_paragraphs)]
+                                for _ in range(num_paragraphs):
+                                    doc.add_paragraph()
 
                 doc.save(output_doc)
                 progress_bar.progress(1.0)
