@@ -24,8 +24,18 @@ start_date = st.sidebar.date_input(
     help="Оценки за даты ранее выбранной не попадут в обратную связь"
 )
 
+# Новая настройка поиска оценок по фамилии
+use_only_surname = st.sidebar.checkbox(
+    "Использовать только фамилии",
+    value=False,
+    help="Если включено, отчет будет группироваться только по первому слову из ФИО "
+         "(подойдет, если в классе нет однофамильцев)"
+)
+
 # Настройка внешнего вида
 st.sidebar.subheader("Внешний вид")
+rotate_text = st.sidebar.toggle("Поворачивать текст тем вертикально", value=True)
+
 compact_mode = st.sidebar.toggle("Компактный режим (Beta)", value=False,
                                  help="Размещает таблицы в ряд для экономии бумаги")
 
@@ -95,8 +105,11 @@ if uploaded_file:
                 try:
                     topics, dates_raw, students = df.iloc[0, 3:], df.iloc[1, 3:], df.iloc[5:, :]
                     for _, row in students.iterrows():
-                        student = row[1]
-                        if not isinstance(student, str) or not student.strip(): continue
+                        raw_name = str(row[1]).strip()
+                        if not raw_name or raw_name.lower() == "nan": continue
+
+                        student_name = raw_name.split()[0] if use_only_surname else raw_name
+
                         for t, d, g in zip(topics, dates_raw, row[3:]):
                             try:
                                 c_date = pd.to_datetime(d).date()
@@ -104,7 +117,7 @@ if uploaded_file:
                                 formatted_g = format_grade(g)
                                 if not formatted_g or formatted_g.lower() == "nan": continue
                                 results.append({
-                                    "ФИО": student.strip(),
+                                    "ФИО": student_name,
                                     "Предмет": str(sheet).strip(),
                                     "Тема": str(t).strip(),
                                     "Дата": c_date,
@@ -150,13 +163,13 @@ if uploaded_file:
                             })
 
                         if compact_mode:
-                            # --- КОМПАКТНЫЙ РЕЖИМ (ПРОПОРЦИОНАЛЬНЫЙ) ---
+                            # --- КОМПАКТНЫЙ РЕЖИМ ---
                             rows, curr_row, curr_w = [], [], 0
                             for s in subjs:
                                 if curr_w + s["w"] > PAGE_WIDTH_CM and curr_row:
                                     rows.append(curr_row)
                                     curr_row, curr_w = [], 0
-                                curr_row.append(s);
+                                curr_row.append(s)
                                 curr_w += s["w"] + 0.5
                             if curr_row: rows.append(curr_row)
 
@@ -167,7 +180,6 @@ if uploaded_file:
 
                                 for c_idx, s in enumerate(r_subjs):
                                     cell = container.rows[0].cells[c_idx]
-                                    # Пропорциональная ширина ячейки контейнера
                                     c_width = int((len(s["topics"]) / total_cols) * cm_to_dxa(PAGE_WIDTH_CM))
                                     cell._tc.get_or_add_tcPr().get_or_add_tcW().set(qn('w:w'), str(c_width))
 
@@ -175,26 +187,27 @@ if uploaded_file:
                                     n_rows = 3 if show_dates else 2
                                     inner = cell.add_table(rows=n_rows, cols=len(s["topics"]))
                                     inner.style = 'Table Grid'
-
-                                    # Фиксация колонок внутри
                                     inner._tbl.tblPr.append(
                                         parse_xml(r'<w:tblLayout {} w:type="fixed"/>'.format(nsdecls('w'))))
 
                                     for ci, (t, d, g) in enumerate(zip(s["topics"], s["dates"], s["grades"])):
                                         inner.rows[0].cells[ci].text = str(t)
-                                        tcPr = inner.rows[0].cells[ci]._tc.get_or_add_tcPr()
-                                        tcPr.append(
-                                            parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w'))))
+                                        if rotate_text:
+                                            tcPr = inner.rows[0].cells[ci]._tc.get_or_add_tcPr()
+                                            tcPr.append(
+                                                parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w'))))
+
                                         if show_dates: inner.rows[1].cells[ci].text = str(d)
                                         inner.rows[-1].cells[ci].text = str(g)
                                         for ri in range(n_rows):
                                             itcW = inner.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW()
                                             itcW.set(qn('w:w'), str(max_col_width_dxa))
 
-                                    calculated_h = max(len(str(t)) for t in s["topics"]) * HEIGHT_COEFF
-                                    final_h = max(BASE_HEIGHT_CM, min(calculated_h, MAX_TOPIC_HEIGHT_CM))
-                                    inner.rows[0].height = Cm(final_h)
-                                    inner.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
+                                    if rotate_text:
+                                        calculated_h = max(len(str(t)) for t in s["topics"]) * HEIGHT_COEFF
+                                        final_h = max(BASE_HEIGHT_CM, min(calculated_h, MAX_TOPIC_HEIGHT_CM))
+                                        inner.rows[0].height = Cm(final_h)
+                                        inner.rows[0].height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
                                 doc.add_paragraph()
                         else:
                             # --- КЛАССИЧЕСКИЙ РЕЖИМ ---
@@ -204,16 +217,21 @@ if uploaded_file:
                                 table = doc.add_table(rows=n_rows, cols=len(s["topics"]))
                                 table.style = 'Table Grid'
                                 for ci, (t, d, g) in enumerate(zip(s["topics"], s["dates"], s["grades"])):
-                                    table.rows[0].cells[ci].text = t
-                                    tcPr = table.rows[0].cells[ci]._tc.get_or_add_tcPr()
-                                    tcPr.append(parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w'))))
-                                    if show_dates: table.rows[1].cells[ci].text = d
-                                    table.rows[-1].cells[ci].text = g
+                                    table.rows[0].cells[ci].text = str(t)
+                                    if rotate_text:
+                                        tcPr = table.rows[0].cells[ci]._tc.get_or_add_tcPr()
+                                        tcPr.append(
+                                            parse_xml(r'<w:textDirection {} w:val="btLr"/>'.format(nsdecls('w'))))
+
+                                    if show_dates: table.rows[1].cells[ci].text = str(d)
+                                    table.rows[-1].cells[ci].text = str(g)
                                     for ri in range(n_rows):
                                         table.rows[ri].cells[ci]._tc.get_or_add_tcPr().get_or_add_tcW().set(qn('w:w'),
                                                                                                             str(max_col_width_dxa))
-                                table.rows[0].height = Cm(
-                                    max(max(len(str(t)) for t in s["topics"]) * HEIGHT_COEFF, BASE_HEIGHT_CM))
+
+                                if rotate_text:
+                                    table.rows[0].height = Cm(
+                                        max(max(len(str(t)) for t in s["topics"]) * HEIGHT_COEFF, BASE_HEIGHT_CM))
 
                         if idx < len(student_groups) - 1:
                             if separator_type == "Разрыв страницы":
@@ -237,3 +255,4 @@ if uploaded_file:
                 )
         except Exception as e:
             st.error(f"Критическая ошибка: {e}")
+            st.exception(e)
