@@ -25,7 +25,7 @@ start_date = st.sidebar.date_input(
 )
 
 # Новая настройка поиска оценок по фамилии
-use_only_surname = st.sidebar.checkbox(
+use_only_surname = st.sidebar.toggle(
     "Использовать только фамилии",
     value=False,
     help="Если включено, отчет будет группироваться только по первому слову из ФИО "
