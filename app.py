@@ -372,14 +372,14 @@ if uploaded_file:
                 )
 
                 if date_issues:
-                    st.error(
+                    st.warning(
                         f"Найдено столбцов с оценками без корректной даты: {len(date_issues)}. "
-                        "Заполните дату для каждого столбца. Пока даты не указаны, создание "
-                        "отчёта будет недоступно."
+                        "Можно заполнить только те даты, которые известны. Если оставить дату "
+                        "пустой, оценки из соответствующего столбца не попадут в табели."
                     )
                     st.caption(
                         "Одна дата применяется ко всем оценкам в указанном столбце. "
-                        "Изменения затрагивают только формируемый отчёт и не меняют исходный Excel."
+                        "Исправления действуют только при формировании отчёта и не меняют исходный Excel."
                     )
 
                     for issue in date_issues:
@@ -408,16 +408,22 @@ if uploaded_file:
                             date_overrides[(issue["subject"], issue["column_index"])] = corrected_date
 
                     if unresolved_date_issues:
-                        st.warning(
-                            f"Осталось заполнить дат: {len(unresolved_date_issues)}. "
-                            "После заполнения всех дат кнопка генерации станет доступна."
+                        skipped_cells_preview = sum(
+                            issue["grade_count"] for issue in unresolved_date_issues
+                        )
+                        st.info(
+                            f"Дат не заполнено: {len(unresolved_date_issues)}. "
+                            f"Оценки в этих столбцах будут пропущены (примерно {skipped_cells_preview} "
+                            "оценочных ячеек). Генерацию можно запускать без заполнения этих дат."
                         )
                     else:
-                        st.success("Все даты заполнены. Оценки из этих столбцов попадут в отчёты.")
+                        st.success("Все найденные даты заполнены. Оценки из этих столбцов могут попасть в отчёты.")
                 else:
                     st.success("Проверка пройдена: у всех столбцов с оценками есть распознанные даты.")
 
-            can_generate = bool(selected_subjects) and not unresolved_date_issues
+            # Незаполненные даты не блокируют генерацию: оценки из таких столбцов
+            # безопасно пропускаются ниже при сборе данных.
+            can_generate = bool(selected_subjects)
             if st.button(
                 "🚀 Создать ОС",
                 type="primary",
@@ -469,8 +475,8 @@ if uploaded_file:
                                     if current_date is None:
                                         current_date = parse_excel_date(date_raw)
                                     if current_date is None:
-                                        # Защитная проверка: генерация блокируется выше,
-                                        # если в столбце есть оценки без заполненной даты.
+                                        # Дата не распознана и пользователь её не исправил:
+                                        # пропускаем оценки из этого столбца, не блокируя генерацию.
                                         continue
                                     if current_date < start_date:
                                         continue
@@ -721,6 +727,15 @@ if uploaded_file:
                             f"✅ Готово! Ученики: {len(student_groups)}; "
                             f"предметы в выборке: {len(selected_subjects)}."
                         )
+                        if unresolved_date_issues:
+                            skipped_grade_cells = sum(
+                                issue["grade_count"] for issue in unresolved_date_issues
+                            )
+                            st.warning(
+                                f"Не включено оценок из-за незаполненных дат: примерно "
+                                f"{skipped_grade_cells} ячеек в {len(unresolved_date_issues)} столбцах. "
+                                "При необходимости заполните даты и создайте отчёт повторно."
+                            )
 
                         filename = (
                             f"Обратная_Связь_{datetime.datetime.now().strftime('%d.%m')} "
