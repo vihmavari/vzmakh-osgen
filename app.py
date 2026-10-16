@@ -1,5 +1,7 @@
 import datetime
 import hashlib
+import math
+import numbers
 from io import BytesIO
 
 import pandas as pd
@@ -95,6 +97,66 @@ def format_grade(val):
     return str(val).strip()
 
 
+def is_blank_cell(value):
+    """Проверяет, пуста ли ячейка Excel, в том числе если там пробелы или NaN."""
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip().lower() in {"", "nan", "nat", "none"}
+
+
+def parse_excel_date(value):
+    """Возвращает дату из ячейки Excel или None, если распознать её нельзя.
+
+    Помимо обычных дат поддерживает Excel serial date (число дней от 1899-12-30).
+    Для строковых дат используется dayfirst=True, что подходит для формата ДД.ММ.ГГГГ.
+    """
+    if is_blank_cell(value):
+        return None
+
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        serial = float(value)
+        if not math.isfinite(serial) or serial < 1 or serial > 2958465:
+            return None
+        try:
+            parsed = pd.to_datetime(
+                serial, unit="D", origin="1899-12-30", errors="coerce"
+            )
+            return None if pd.isna(parsed) else parsed.date()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    try:
+        parsed = pd.to_datetime(str(value).strip(), errors="coerce", dayfirst=True)
+        return None if pd.isna(parsed) else parsed.date()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def excel_column_name(zero_based_index):
+    """Преобразует индекс столбца DataFrame в букву столбца Excel."""
+    number = zero_based_index + 1
+    letters = ""
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters
+
+
+def display_cell_value(value):
+    """Читабельное представление исходного значения для интерфейса."""
+    return "(пусто)" if is_blank_cell(value) else str(value).strip()
+
+
 max_col_width_dxa = cm_to_dxa(MAX_WIDTH_CM)
 
 
@@ -152,6 +214,51 @@ def get_subject_sheets(workbook_bytes):
             seen.add(subject)
 
     return sheet_names, subject_sheets
+
+
+def find_columns_with_missing_dates(workbook_bytes, subject_sheets):
+    """Находит столбцы, где есть оценки, но дата в строке 2 не распознаётся."""
+    issues = []
+
+    for sheet in subject_sheets:
+        try:
+            df = pd.read_excel(BytesIO(workbook_bytes), sheet_name=sheet, header=None)
+        except Exception:
+            continue
+
+        # В формате журнала темы находятся в первой строке, даты — во второй,
+        # ученики — начиная с шестой строки; оценки начинаются со столбца D.
+        if df.shape[0] <= 5 or df.shape[1] <= 3:
+            continue
+
+        for column_index in range(3, df.shape[1]):
+            raw_date = df.iloc[1, column_index] if df.shape[0] > 1 else None
+            if parse_excel_date(raw_date) is not None:
+                continue
+
+            topic_value = df.iloc[0, column_index] if df.shape[0] > 0 else None
+            topic = "(тема не указана)" if is_blank_cell(topic_value) else str(topic_value).strip()
+
+            grade_count = 0
+            for _, student_row in df.iloc[5:, :].iterrows():
+                if len(student_row) <= 1 or is_blank_cell(student_row.iloc[1]):
+                    continue
+                if len(student_row) > column_index and not is_blank_cell(student_row.iloc[column_index]):
+                    grade_count += 1
+
+            if grade_count:
+                issues.append(
+                    {
+                        "subject": sheet,
+                        "column_index": column_index,
+                        "column_letter": excel_column_name(column_index),
+                        "topic": topic,
+                        "raw_date": display_cell_value(raw_date),
+                        "grade_count": grade_count,
+                    }
+                )
+
+    return issues
 
 
 # -----------------------------------------------------------------------------
@@ -254,10 +361,67 @@ if uploaded_file:
             if not selected_subjects:
                 st.warning("Выберите хотя бы один предмет на вкладке «Предметы».")
 
+            # ------------------ ПРОВЕРКА ДАТ ОЦЕНОК ------------------
+            date_overrides = {}
+            unresolved_date_issues = []
+
+            st.subheader("📅 Проверка дат оценок")
+            if selected_subjects:
+                date_issues = find_columns_with_missing_dates(
+                    workbook_bytes, selected_subjects
+                )
+
+                if date_issues:
+                    st.error(
+                        f"Найдено столбцов с оценками без корректной даты: {len(date_issues)}. "
+                        "Заполните дату для каждого столбца. Пока даты не указаны, создание "
+                        "отчёта будет недоступно."
+                    )
+                    st.caption(
+                        "Одна дата применяется ко всем оценкам в указанном столбце. "
+                        "Изменения затрагивают только формируемый отчёт и не меняют исходный Excel."
+                    )
+
+                    for issue in date_issues:
+                        left, middle, right = st.columns([1.45, 1.65, 1.0])
+                        with left:
+                            st.markdown(f"**{issue['subject']} · столбец {issue['column_letter']}**")
+                            st.caption(f"Тема: {issue['topic']}")
+                        with middle:
+                            st.markdown(f"Исходная дата: `{issue['raw_date']}`")
+                            st.caption(f"Оценок в столбце: {issue['grade_count']}")
+                        with right:
+                            issue_hash = hashlib.sha1(
+                                f"{issue['subject']}::{issue['column_index']}".encode("utf-8")
+                            ).hexdigest()[:10]
+                            corrected_date = st.date_input(
+                                "Укажите дату",
+                                value=None,
+                                key=f"date_override_{file_signature}_{issue_hash}",
+                                format="DD.MM.YYYY",
+                                help="Выберите настоящую дату проведения занятия или выставления оценки.",
+                            )
+
+                        if corrected_date is None:
+                            unresolved_date_issues.append(issue)
+                        else:
+                            date_overrides[(issue["subject"], issue["column_index"])] = corrected_date
+
+                    if unresolved_date_issues:
+                        st.warning(
+                            f"Осталось заполнить дат: {len(unresolved_date_issues)}. "
+                            "После заполнения всех дат кнопка генерации станет доступна."
+                        )
+                    else:
+                        st.success("Все даты заполнены. Оценки из этих столбцов попадут в отчёты.")
+                else:
+                    st.success("Проверка пройдена: у всех столбцов с оценками есть распознанные даты.")
+
+            can_generate = bool(selected_subjects) and not unresolved_date_issues
             if st.button(
                 "🚀 Создать ОС",
                 type="primary",
-                disabled=not selected_subjects,
+                disabled=not can_generate,
             ):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -298,33 +462,35 @@ if uploaded_file:
                                 if not student_name:
                                     student_name = source_name
 
-                                for topic, date_raw, grade in zip(
-                                    topics, dates_raw, row.iloc[3:]
+                                for column_index, (topic, date_raw, grade) in enumerate(
+                                    zip(topics, dates_raw, row.iloc[3:]), start=3
                                 ):
-                                    try:
-                                        current_date = pd.to_datetime(date_raw).date()
-                                        if current_date < start_date:
-                                            continue
-
-                                        formatted_grade = format_grade(grade)
-                                        if (
-                                            not formatted_grade
-                                            or formatted_grade.lower() == "nan"
-                                        ):
-                                            continue
-
-                                        results.append(
-                                            {
-                                                "ФИО": student_name,
-                                                "Предмет": str(sheet).strip(),
-                                                "Тема": str(topic).strip(),
-                                                "Дата": current_date,
-                                                "Оценка": formatted_grade,
-                                            }
-                                        )
-                                    except Exception:
-                                        # Некорректная дата или пустая ячейка — пропускаем оценку.
+                                    current_date = date_overrides.get((sheet, column_index))
+                                    if current_date is None:
+                                        current_date = parse_excel_date(date_raw)
+                                    if current_date is None:
+                                        # Защитная проверка: генерация блокируется выше,
+                                        # если в столбце есть оценки без заполненной даты.
                                         continue
+                                    if current_date < start_date:
+                                        continue
+
+                                    formatted_grade = format_grade(grade)
+                                    if (
+                                        not formatted_grade
+                                        or formatted_grade.lower() == "nan"
+                                    ):
+                                        continue
+
+                                    results.append(
+                                        {
+                                            "ФИО": student_name,
+                                            "Предмет": str(sheet).strip(),
+                                            "Тема": str(topic).strip(),
+                                            "Дата": current_date,
+                                            "Оценка": formatted_grade,
+                                        }
+                                    )
                         except Exception:
                             # Пропускаем лист, который не удалось разобрать.
                             continue
